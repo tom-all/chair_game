@@ -18,11 +18,11 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            //fire_tracer first: it reads the lock state of this frame, so the click
+            //fire_bullet first: it reads the lock state of this frame, so the click
             //that locks the cursor is consumed and only fires once already locked
-            (weapon::fire_tracer, camera::manage_cursor, debug_hud::update_debug_hud),
+            (weapon::fire_bullet, camera::manage_cursor, debug_hud::update_debug_hud),
         )
-        .add_systems(Update, weapon::expire_tracers)
+        .add_systems(Update, weapon::move_bullets)
         .add_plugins(crosshair::CrosshairPlugin)
         //character still moves and can shoot while paused, not a big deal rn but the whole click to lock cursor thing will have to go when we want to fix it
         .add_plugins(pausemenu::PauseMenuPlugin)

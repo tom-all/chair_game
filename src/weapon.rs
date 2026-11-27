@@ -7,23 +7,29 @@ use bevy_rapier3d::prelude::*;
 
 /// How far a shot travels before giving up, in world units.
 const MAX_TOI: f32 = 100.0;
-/// How long a tracer stays visible, in seconds.
-const TRACER_LIFETIME: f32 = 0.08;
-/// The tracer's radius, in world units.
-const TRACER_RADIUS: f32 = 0.0125;
+/// How fast a bullet flies, in world units per second.
+const BULLET_SPEED: f32 = 100.0;
+/// The bullet's radius, in world units.
+const BULLET_RADIUS: f32 = 0.005;
+/// The bullet's length, in world units.
+const BULLET_LENGTH: f32 = 0.04;
 /// The tip of the gun model in camera space: the front of the cone in
 /// models/weapon1.glb (0.2733, -0.1166, -0.2039 in the file) shifted by
-/// player::GUN_VIEW_OFFSET, so the tracer starts at the muzzle.
+/// player::GUN_VIEW_OFFSET, so the bullet starts at the muzzle.
 const MUZZLE_OFFSET: Vec3 = Vec3::new(0.1133, -0.0266, -0.2039);
 
-/// A tracer that despawns once its lifetime runs out.
+/// A bullet in flight: where it is heading and how much of the shot is left.
 #[derive(Component)]
-pub struct Lifetime(f32);
+pub struct Bullet {
+    direction: Vec3,
+    remaining: f32,
+}
 
-//left-click fires while the cursor is locked. This must run before manage_cursor
-//(see main.rs), so the click that locks the cursor still sees the old state and
-//is consumed: the first shot only goes off once the cursor is already locked.
-pub fn fire_tracer(
+//left-click fires a bullet while the cursor is locked. This must run before
+//manage_cursor (see main.rs), so the click that locks the cursor still sees the
+//old state and is consumed: the first shot only goes off once the cursor is
+//already locked.
+pub fn fire_bullet(
     mouse: Res<ButtonInput<MouseButton>>,
     cursor: Single<&CursorOptions>,
     window: Single<&Window, With<PrimaryWindow>>,
@@ -51,7 +57,7 @@ pub fn fire_tracer(
     let Ok(context) = rapier_context.single() else {
         return;
     };
-    //cast along the aim ray so the tracer converges on the crosshair at the
+    //cast along the aim ray so the bullet converges on the crosshair at the
     //target, not at a fixed distance in front of the camera
     let toi = context
         .cast_ray(aim.origin, *aim.direction, MAX_TOI, true, filter)   
@@ -66,8 +72,8 @@ pub fn fire_tracer(
     }
 
     let mesh = meshes.add(Cylinder {
-        radius: TRACER_RADIUS,
-        half_height: length / 2.0,
+        radius: BULLET_RADIUS,
+        half_height: BULLET_LENGTH / 2.0,
     });
     let material = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.85, 0.0),
@@ -78,24 +84,30 @@ pub fn fire_tracer(
         Mesh3d(mesh),
         MeshMaterial3d(material),
         Transform {
-            translation: (origin + impact) / 2.0,
+            translation: origin,
             //the cylinder's axis is Y; point it along the shot
             rotation: Quat::from_rotation_arc(Vec3::Y, dir),
             ..default()
         },
-        Lifetime(TRACER_LIFETIME),
+        Bullet {
+            direction: dir,
+            remaining: length,
+        },
     ));
 }
 
-//despawn tracers once their lifetime runs out
-pub fn expire_tracers(
+//fly the bullets along the shot and despawn them at the impact
+pub fn move_bullets(
     time: Res<Time>,
-    mut tracers: Query<(Entity, &mut Lifetime)>,
+    mut bullets: Query<(Entity, &mut Transform, &mut Bullet)>,
     mut commands: Commands,
 ) {
-    for (entity, mut lifetime) in &mut tracers {
-        lifetime.0 -= time.delta_secs();
-        if lifetime.0 <= 0.0 {
+    let step = BULLET_SPEED * time.delta_secs();
+    for (entity, mut transform, mut bullet) in &mut bullets {
+        let travel = step.min(bullet.remaining);
+        transform.translation += bullet.direction * travel;
+        bullet.remaining -= travel;
+        if bullet.remaining <= 0.0 {
             commands.entity(entity).despawn();
         }
     }
@@ -136,7 +148,7 @@ mod tests {
         )))
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
-        .add_systems(Update, (fire_tracer, expire_tracers));
+        .add_systems(Update, (fire_bullet, move_bullets));
 
         let world = app.world_mut();
         let window = world.spawn((
@@ -209,9 +221,9 @@ mod tests {
         app.update();
     }
 
-    fn tracers(world: &mut World) -> Vec<Entity> {
+    fn bullets(world: &mut World) -> Vec<Entity> {
         world
-            .query_filtered::<Entity, With<Lifetime>>()
+            .query_filtered::<Entity, With<Bullet>>()
             .iter(world)
             .collect()
     }
@@ -223,19 +235,27 @@ mod tests {
         click(&mut app, window);
 
         let mut world = app.world_mut();
-        let tracers = tracers(&mut world);
-        assert_eq!(tracers.len(), 1);
-        let transform = world.entity(tracers[0]).get::<Transform>().unwrap();
+        let spawned = bullets(&mut world);
+        assert_eq!(spawned.len(), 1);
+        let transform = world.entity(spawned[0]).get::<Transform>().unwrap();
         //the ray is cast along the aim ray (down -Z) from the camera, so it lands on
-        //the wall's front face at -4.5 m, on the crosshair line (x = 0). The tracer
-        //runs from the gun's muzzle to that impact, so it converges on the
-        //crosshair at the target. If the player weren't excluded, the ray would start
-        //inside the player's collider and the tracer would collapse to zero length.
+        //the wall's front face at -4.5 m, on the crosshair line (x = 0). The bullet
+        //spawns at the gun's muzzle and flies along the muzzle-to-impact line, so it
+        //converges on the crosshair at the target. If the player weren't excluded,
+        //the ray would start inside the player's collider and the shot would collapse
+        //to zero length.
         let impact = Vec3::new(0.0, 0.0, -4.5);
         //the camera sits at the origin, so the muzzle is MUZZLE_OFFSET in world space
         let muzzle = MUZZLE_OFFSET;
         let dir = (impact - muzzle).normalize();
-        assert!(transform.translation.abs_diff_eq((muzzle + impact) / 2.0, 1e-2), "{transform:?}");
+        //the click helper runs two frames (press, release). fire_bullet's spawn
+        //is applied after the firing frame's systems, so by the end of the click
+        //the bullet has flown one frame's worth of the shot
+        let flown = BULLET_SPEED / 60.0;
+        assert!(
+            transform.translation.abs_diff_eq(muzzle + dir * flown, 1e-2),
+            "{transform:?}"
+        );
         //the cylinder points from the muzzle toward the crosshair target
         let axis = transform.rotation * Vec3::Y;
         assert!(axis.abs_diff_eq(dir, 1e-2), "{axis:?}");
@@ -251,7 +271,7 @@ mod tests {
         warm_up(&mut app);
         click(&mut app, window);
 
-        assert!(tracers(&mut app.world_mut()).is_empty());
+        assert!(bullets(&mut app.world_mut()).is_empty());
     }
 
     #[test]
@@ -265,30 +285,44 @@ mod tests {
         click(&mut app, window);
 
         let mut world = app.world_mut();
-        let tracers = tracers(&mut world);
-        assert_eq!(tracers.len(), 1);
-        let transform = world.entity(tracers[0]).get::<Transform>().unwrap();
-        //the ray is cast along the aim ray (down +X) and misses the wall, so it flies
-        //to MAX_TOI. The tracer runs from the muzzle (rotated with the camera) to
-        //the impact 100 m out, so its midpoint sits about half that way along +X.
+        let spawned = bullets(&mut world);
+        assert_eq!(spawned.len(), 1);
+        let transform = world.entity(spawned[0]).get::<Transform>().unwrap();
+        //the ray is cast along the aim ray (down +X) and misses the wall, so the
+        //bullet flies to MAX_TOI. It spawns at the muzzle (rotated with the camera)
+        //and is one frame into the shot after the click.
         const NEAR: f32 = 0.1; //viewport_to_world returns the ray from the near plane
         let rot = Quat::from_rotation_y(-std::f32::consts::PI / 2.0);
         let muzzle = rot * MUZZLE_OFFSET;
         let impact = Vec3::new(NEAR + MAX_TOI, 0.0, 0.0);
-        assert!(transform.translation.abs_diff_eq((muzzle + impact) / 2.0, 1e-2), "{transform:?}");
+        let dir = (impact - muzzle).normalize();
+        let flown = BULLET_SPEED / 60.0;
+        assert!(
+            transform.translation.abs_diff_eq(muzzle + dir * flown, 1e-2),
+            "{transform:?}"
+        );
+
+        //the miss covers the full MAX_TOI at BULLET_SPEED: 60 frames, one of
+        //which the click already flew
+        for _ in 0..60 {
+            app.update();
+        }
+        assert!(bullets(&mut app.world_mut()).is_empty());
     }
 
     #[test]
-    fn tracer_despawns_after_its_lifetime() {
+    fn bullet_despawns_at_the_impact() {
         let (mut app, window, _camera) = test_app();
         warm_up(&mut app);
         click(&mut app, window);
-        assert_eq!(tracers(&mut app.world_mut()).len(), 1);
+        assert_eq!(bullets(&mut app.world_mut()).len(), 1);
 
-        //80 ms is 4.8 frames at 60 fps
-        for _ in 0..6 {
+        //the shot runs about 4.3 m from the muzzle to the wall at 100 m/s: 2.6
+        //frames, and the click has already flown one of them, so two more frames
+        //put the bullet past the impact
+        for _ in 0..2 {
             app.update();
         }
-        assert!(tracers(&mut app.world_mut()).is_empty());
+        assert!(bullets(&mut app.world_mut()).is_empty());
     }
 }
