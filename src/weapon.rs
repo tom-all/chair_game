@@ -5,16 +5,16 @@ use bevy::{
 use bevy_fps_controller::controller::{LogicalPlayer, RenderPlayer};
 use bevy_rapier3d::prelude::*;
 
-/// How far to the right of the view the shot comes out, in world units.
-const GUN_OFFSET: f32 = 0.5;
 /// How far a shot travels before giving up, in world units.
 const MAX_TOI: f32 = 100.0;
 /// How long a tracer stays visible, in seconds.
 const TRACER_LIFETIME: f32 = 0.08;
-/// Where the tracer starts, in front of the camera.
-const TRACER_START: f32 = 0.5;
 /// The tracer's radius, in world units.
 const TRACER_RADIUS: f32 = 0.05;
+/// The tip of the gun model in camera space: the front of the cone in
+/// models/weapon1.glb (0.2733, -0.1166, -0.2039 in the file) shifted by
+/// player::GUN_VIEW_OFFSET, so the tracer starts at the muzzle.
+const MUZZLE_OFFSET: Vec3 = Vec3::new(0.1133, -0.0266, -0.2039);
 
 /// A tracer that despawns once its lifetime runs out.
 #[derive(Component)]
@@ -42,10 +42,9 @@ pub fn fire_tracer(
     let Ok(aim) = camera.0.viewport_to_world(camera.1, window.size() / 2.0) else {
         return;
     };
-    //the shot comes out of the gun on the right side of the screen and
-    //converges on whatever the cursor points at
-    let right = camera.1.rotation() * Vec3::X;
-    let origin = Vec3::from(aim.origin) + right * GUN_OFFSET;
+    //the shot comes out of the gun model's muzzle and converges on
+    //whatever the cursor points at
+    let origin = camera.1.translation() + camera.1.rotation() * MUZZLE_OFFSET;
 
     //exclude the player's own collider, or every shot hits the body at range zero
     let filter = QueryFilter::new().exclude_rigid_body(*player);
@@ -61,9 +60,7 @@ pub fn fire_tracer(
 
     let impact: Vec3 = (aim.origin + aim.direction * toi).into();
     let dir = (impact - origin).normalize();
-    let start = origin + dir * TRACER_START;
-    let end = impact;
-    let length = (end - start).length();
+    let length = (impact - origin).length();
     if length < f32::EPSILON {
         return;
     }
@@ -81,7 +78,7 @@ pub fn fire_tracer(
         Mesh3d(mesh),
         MeshMaterial3d(material),
         Transform {
-            translation: (start + end) / 2.0,
+            translation: (origin + impact) / 2.0,
             //the cylinder's axis is Y; point it along the shot
             rotation: Quat::from_rotation_arc(Vec3::Y, dir),
             ..default()
@@ -231,15 +228,14 @@ mod tests {
         let transform = world.entity(tracers[0]).get::<Transform>().unwrap();
         //the ray is cast along the aim ray (down -Z) from the camera, so it lands on
         //the wall's front face at -4.5 m, on the crosshair line (x = 0). The tracer
-        //runs from the muzzle (x = +0.5) to that impact, so it converges on the
+        //runs from the gun's muzzle to that impact, so it converges on the
         //crosshair at the target. If the player weren't excluded, the ray would start
         //inside the player's collider and the tracer would collapse to zero length.
-        const NEAR: f32 = 0.1; //viewport_to_world returns the ray from the near plane
         let impact = Vec3::new(0.0, 0.0, -4.5);
-        let muzzle = Vec3::new(GUN_OFFSET, 0.0, -NEAR);
+        //the camera sits at the origin, so the muzzle is MUZZLE_OFFSET in world space
+        let muzzle = MUZZLE_OFFSET;
         let dir = (impact - muzzle).normalize();
-        let start = muzzle + dir * TRACER_START;
-        assert!(transform.translation.abs_diff_eq((start + impact) / 2.0, 1e-2), "{transform:?}");
+        assert!(transform.translation.abs_diff_eq((muzzle + impact) / 2.0, 1e-2), "{transform:?}");
         //the cylinder points from the muzzle toward the crosshair target
         let axis = transform.rotation * Vec3::Y;
         assert!(axis.abs_diff_eq(dir, 1e-2), "{axis:?}");
@@ -273,14 +269,13 @@ mod tests {
         assert_eq!(tracers.len(), 1);
         let transform = world.entity(tracers[0]).get::<Transform>().unwrap();
         //the ray is cast along the aim ray (down +X) and misses the wall, so it flies
-        //to MAX_TOI. The tracer runs from the muzzle (offset +Z by the gun offset) to
+        //to MAX_TOI. The tracer runs from the muzzle (rotated with the camera) to
         //the impact 100 m out, so its midpoint sits about half that way along +X.
         const NEAR: f32 = 0.1; //viewport_to_world returns the ray from the near plane
-        let muzzle = Vec3::new(NEAR, 0.0, GUN_OFFSET);
+        let rot = Quat::from_rotation_y(-std::f32::consts::PI / 2.0);
+        let muzzle = rot * MUZZLE_OFFSET;
         let impact = Vec3::new(NEAR + MAX_TOI, 0.0, 0.0);
-        let dir = (impact - muzzle).normalize();
-        let start = muzzle + dir * TRACER_START;
-        assert!(transform.translation.abs_diff_eq((start + impact) / 2.0, 1e-2), "{transform:?}");
+        assert!(transform.translation.abs_diff_eq((muzzle + impact) / 2.0, 1e-2), "{transform:?}");
     }
 
     #[test]
