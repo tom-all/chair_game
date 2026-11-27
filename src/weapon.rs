@@ -10,7 +10,7 @@ const MAX_TOI: f32 = 100.0;
 /// How long a tracer stays visible, in seconds.
 const TRACER_LIFETIME: f32 = 0.08;
 /// The tracer's radius, in world units.
-const TRACER_RADIUS: f32 = 0.05;
+const TRACER_RADIUS: f32 = 0.0125;
 /// The tip of the gun model in camera space: the front of the cone in
 /// models/weapon1.glb (0.2733, -0.1166, -0.2039 in the file) shifted by
 /// player::GUN_VIEW_OFFSET, so the tracer starts at the muzzle.
