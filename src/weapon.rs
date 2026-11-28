@@ -13,6 +13,8 @@ const BULLET_SPEED: f32 = 100.0;
 const BULLET_RADIUS: f32 = 0.005;
 /// The bullet's length, in world units.
 const BULLET_LENGTH: f32 = 0.04;
+/// The radius of the yellow sphere that marks where a bullet lands, in world units.
+const IMPACT_SPHERE_RADIUS: f32 = 0.05;
 /// The tip of the gun model in camera space: the front of the cone in
 /// models/weapon1.glb (0.2733, -0.1166, -0.2039 in the file) shifted by
 /// player::GUN_VIEW_OFFSET, so the bullet starts at the muzzle.
@@ -23,6 +25,15 @@ const MUZZLE_OFFSET: Vec3 = Vec3::new(0.1133, -0.0266, -0.2039);
 pub struct Bullet {
     direction: Vec3,
     remaining: f32,
+}
+
+/// A pending impact marker: a yellow sphere that appears at the shot's impact
+/// point the frame the bullet gets there. `time_left` is the flight time
+/// (impact distance / BULLET_SPEED), counting down each frame.
+#[derive(Component)]
+pub struct ImpactMarker {
+    position: Vec3,
+    time_left: f32,
 }
 
 //left-click fires a bullet while the cursor is locked. This must run before
@@ -94,6 +105,12 @@ pub fn fire_bullet(
             remaining: length,
         },
     ));
+    //the bullet takes length / BULLET_SPEED to reach the impact; schedule a
+    //yellow sphere to appear there the frame it gets there
+    commands.spawn(ImpactMarker {
+        position: impact,
+        time_left: length / BULLET_SPEED,
+    });
 }
 
 //fly the bullets along the shot and despawn them at the impact
@@ -108,6 +125,37 @@ pub fn move_bullets(
         transform.translation += bullet.direction * travel;
         bullet.remaining -= travel;
         if bullet.remaining <= 0.0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+//count down the pending impacts and, the frame the bullet arrives, drop a
+//yellow sphere at the impact point
+pub fn spawn_impact_markers(
+    time: Res<Time>,
+    mut markers: Query<(Entity, &mut ImpactMarker)>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut marker) in &mut markers {
+        marker.time_left -= dt;
+        if marker.time_left <= 0.0 {
+            let mesh = meshes.add(Sphere {
+                radius: IMPACT_SPHERE_RADIUS,
+            });
+            let material = materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 1.0, 0.0),
+                emissive: Color::srgb(1.0, 1.0, 0.0).to_linear(),
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                Transform::from_translation(marker.position),
+            ));
             commands.entity(entity).despawn();
         }
     }
@@ -148,7 +196,7 @@ mod tests {
         )))
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
-        .add_systems(Update, (fire_bullet, move_bullets));
+        .add_systems(Update, (fire_bullet, move_bullets, spawn_impact_markers));
 
         let world = app.world_mut();
         let window = world.spawn((
@@ -225,6 +273,15 @@ mod tests {
         world
             .query_filtered::<Entity, With<Bullet>>()
             .iter(world)
+            .collect()
+    }
+
+    //the impact spheres: mesh entities that are not bullets
+    fn impact_spheres(world: &mut World) -> Vec<Vec3> {
+        world
+            .query_filtered::<&Transform, (With<Mesh3d>, Without<Bullet>)>()
+            .iter(world)
+            .map(|t| t.translation)
             .collect()
     }
 
@@ -324,5 +381,28 @@ mod tests {
             app.update();
         }
         assert!(bullets(&mut app.world_mut()).is_empty());
+    }
+
+    #[test]
+    fn impact_marker_appears_when_the_bullet_arrives() {
+        let (mut app, window, _camera) = test_app();
+        warm_up(&mut app);
+        click(&mut app, window);
+        assert_eq!(bullets(&mut app.world_mut()).len(), 1);
+
+        //the click has flown the bullet one frame; one more frame keeps it in
+        //flight, so no marker yet
+        app.update();
+        assert_eq!(bullets(&mut app.world_mut()).len(), 1);
+        assert!(impact_spheres(&mut app.world_mut()).is_empty());
+
+        //the next frame puts the bullet past the impact: it despawns and the
+        //marker drops its sphere at the impact point the same frame
+        app.update();
+        assert!(bullets(&mut app.world_mut()).is_empty());
+        let impact = Vec3::new(0.0, 0.0, -4.5);
+        let spheres = impact_spheres(&mut app.world_mut());
+        assert_eq!(spheres.len(), 1, "{spheres:?}");
+        assert!(spheres[0].abs_diff_eq(impact, 1e-2), "{spheres:?}");
     }
 }
