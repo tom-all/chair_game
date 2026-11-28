@@ -1,6 +1,7 @@
 mod camera;
 mod debug_hud;
 mod net;
+mod menu;
 mod player;
 mod weapon;
 mod world;
@@ -19,11 +20,26 @@ fn main() {
         net::server::run_server();
         return;
     }
+
+    // The menu is shown only for a plain standalone launch: a CLI mode is already
+    // chosen, and the betty harness can't click buttons.
+    let show_menu = matches!(mode, net::NetMode::Standalone) && !cfg!(feature = "betty");
+    let initial_state = if show_menu {
+        pausemenu::GameState::Menu
+    } else {
+        pausemenu::GameState::Playing
+    };
+    let choice = match mode {
+        net::NetMode::Client(addr) => net::NetModeChoice::Client(addr),
+        _ => net::NetModeChoice::Idle,
+    };
+
     let mut app = App::new();
     app.add_plugins(DefaultPlugins)
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(RapierPhysicsPlugin::<()>::default())
         .add_plugins(FpsControllerPlugin)
+        .add_plugins(net::client::NetClientPlugin)
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -36,9 +52,11 @@ fn main() {
         //character still moves and can shoot while paused, not a big deal rn but the whole click to lock cursor thing will have to go when we want to fix it
         .add_plugins(pausemenu::PauseMenuPlugin);
     //Client mode adds the networking client on top of the usual game.
-    if let net::NetMode::Client(addr) = mode {
-        app.add_plugins(net::client::NetClientPlugin { addr });
+    if show_menu {
+        app.add_plugins(menu::MenuPlugin);
     }
+    app.insert_resource(choice)
+        .insert_state(initial_state);
     app
         .run();
 }

@@ -20,6 +20,8 @@ pub enum GameState {
     #[default]
     Playing,
     Paused,
+    /// Startup menu: play solo or join a friend's server.
+    Menu,
 }
 
 #[derive(Resource)]
@@ -46,8 +48,9 @@ pub struct PauseMenuPlugin;
 
 impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
+        // GameState is registered in main.rs (insert_state) so the initial state can be
+        // Menu or Playing; the menu plugin is added only when the menu is shown.
         app.add_plugins(TabNavigationPlugin)
-            .init_state::<GameState>()
             .init_resource::<MouseSettings>()
             .add_systems(
                 Update,
@@ -68,10 +71,15 @@ fn toggle_pause(
     state: Res<State<GameState>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
+    // Escape does nothing in the menu: the menu owns the cursor and the buttons.
+    if *state.get() == GameState::Menu {
+        return;
+    }
     if keys.just_pressed(KeyCode::Escape) {
         next_state.set(match state.get() {
             GameState::Playing => GameState::Paused,
             GameState::Paused => GameState::Playing,
+            GameState::Menu => GameState::Menu,
         });
     }
 }

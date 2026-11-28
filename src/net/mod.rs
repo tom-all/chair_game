@@ -7,11 +7,28 @@ pub mod server;
 
 use std::net::SocketAddr;
 
+use bevy::prelude::Resource;
+
 /// How the game runs: standalone (default), a headless server, or a client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetMode {
     Standalone,
     Server,
+    Client(SocketAddr),
+}
+
+/// What the player chose at the startup menu (or passed on the command line).
+///
+/// The menu sets this at runtime and the client plugin reads it each frame, so a client
+/// can be spawned after the app has started. `Idle` means the menu is still open.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum NetModeChoice {
+    /// The menu is still open; nothing has been chosen yet.
+    #[default]
+    Idle,
+    /// Play solo.
+    Standalone,
+    /// Join a friend's server.
     Client(SocketAddr),
 }
 
@@ -148,7 +165,8 @@ mod integration_tests {
             .add_plugins(AssetPlugin::default())
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
-            .add_plugins(client::NetClientPlugin { addr })
+            .add_plugins(client::NetClientPlugin)
+            .insert_resource(NetModeChoice::Client(addr))
             .insert_resource(TimeUpdateStrategy::ManualDuration(TICK));
         app.world_mut().spawn((
             LogicalPlayer,
