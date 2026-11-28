@@ -7,7 +7,7 @@ use bevy_rapier3d::prelude::*;
 pub fn spawn_world(commands: &mut Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         WorldAssetRoot(asset_server.load(
-            GltfAssetLabel::Scene(0).from_asset("maps/first.glb"),
+            GltfAssetLabel::Scene(0).from_asset("maps/lansdowne.glb"),
         )),
         AsyncSceneCollider::default(),
     ));
