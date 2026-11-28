@@ -3,6 +3,7 @@
 
 use std::net::SocketAddr;
 
+use bevy::app::ScheduleRunnerPlugin;
 use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use lightyear::prelude::*;
@@ -27,7 +28,10 @@ struct ListenAddr(SocketAddr);
 pub fn build_server_app(listen_addr: SocketAddr) -> App {
     let mut app = App::new();
     app.insert_resource(ListenAddr(listen_addr))
-        .add_plugins(MinimalPlugins)
+        // Default MinimalPlugins runs with no wait, spinning a core at 100%.
+        .add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
+            core::time::Duration::from_secs_f64(1.0 / TICK_HZ),
+        )))
         .add_plugins(StatesPlugin)
         .add_plugins(ServerPlugins {
             tick_duration: core::time::Duration::from_secs_f64(1.0 / TICK_HZ),
