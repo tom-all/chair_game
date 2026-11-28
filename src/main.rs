@@ -41,6 +41,12 @@ fn main() {
         .add_plugins(FpsControllerPlugin)
         .add_plugins(net::client::NetClientPlugin)
         .add_systems(Startup, setup)
+        // The player is spawned in Startup, which runs after the OnEnter(Menu)
+        // schedule, so the controllers are disabled here rather than in enter_menu.
+        .add_systems(
+            Startup,
+            menu::disable_controllers.run_if(in_state(pausemenu::GameState::Menu)).after(setup),
+        )
         .add_systems(
             Update,
             //fire_bullet first: it reads the lock state of this frame, so the click

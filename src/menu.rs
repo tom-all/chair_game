@@ -37,9 +37,6 @@ impl Plugin for MenuPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(GameState::Menu), (enter_menu, spawn_menu))
             .add_systems(OnExit(GameState::Menu), (exit_menu, despawn_menu))
-            // The player is spawned in Startup, which runs after the OnEnter(Menu)
-            // schedule, so the controllers are disabled here rather than in enter_menu.
-            .add_systems(Startup, disable_controllers.run_if(in_state(GameState::Menu)))
             .add_systems(Update, submit_join.run_if(in_state(GameState::Menu)));
     }
 }
@@ -49,8 +46,9 @@ fn enter_menu(mut cursor: Single<&mut CursorOptions>) {
     cursor.visible = true;
 }
 
-/// Disable the controllers now that the player exists (the menu is open).
-fn disable_controllers(mut controllers: Query<&mut FpsController>) {
+/// Disable the controllers now that the player exists (the menu is open). Added in
+/// main.rs after `setup`, so it runs once the player is spawned.
+pub fn disable_controllers(mut controllers: Query<&mut FpsController>) {
     for mut controller in &mut controllers {
         controller.enable_input = false;
     }
